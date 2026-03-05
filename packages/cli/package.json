@@ -1,0 +1,26 @@
+{
+  "name": "writingdesk-setup",
+  "version": "0.1.0",
+  "description": "Setup CLI for WritingDesk — creates GitHub App and generates config files",
+  "type": "module",
+  "bin": {
+    "writingdesk-setup": "./dist/setup.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.0",
+    "@octokit/auth-app": "^7.0.0",
+    "@octokit/rest": "^21.0.0",
+    "jose": "^5.0.0",
+    "open": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

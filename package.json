@@ -1,0 +1,13 @@
+{
+  "name": "writingdesk",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace=packages/app",
+    "build": "npm run build --workspace=packages/app",
+    "check": "npm run check --workspace=packages/app"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
