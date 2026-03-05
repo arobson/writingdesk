@@ -21,7 +21,7 @@ export interface SaveOptions {
 
 export async function savePost({ slug, previousSlug, frontmatter, body, sha, branch }: SaveOptions): Promise<string> {
   if (previousSlug && previousSlug !== slug) {
-    await cli.movePost(previousSlug, slug, frontmatter as Record<string, unknown>, body)
+    await cli.movePost(previousSlug, slug, frontmatter as unknown as Record<string, unknown>, body)
     return api.getPost(slug).then(p => p.sha)
   }
   return api.savePost({ slug, frontmatter, body, sha, branch })

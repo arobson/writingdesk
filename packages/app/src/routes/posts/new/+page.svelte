@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PageData, ActionData } from './$types'
-  import { slugify, today } from '$lib/utils.js'
+  import { slugify } from '$lib/utils.js'
 
   let { data, form }: { data: PageData; form: ActionData } = $props()
 

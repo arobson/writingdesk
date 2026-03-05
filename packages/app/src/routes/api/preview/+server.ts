@@ -46,8 +46,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   const pruned = await pruneOldBuilds(slug)
   await Promise.all(pruned.map(cleanupBuild))
 
-  // Run build asynchronously
-  setImmediate(() => runBuild(buildId, branch, slug))
+  // Run build asynchronously — setTimeout(0) is universal across Node and edge
+  setTimeout(() => runBuild(buildId, branch, slug), 0)
 
   return json({ buildId, branch, status: 'queued' }, { status: 202 })
 }

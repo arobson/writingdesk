@@ -1,6 +1,3 @@
-<script lang="ts">
-  import { getConfig } from '$lib/server/config.js'
-</script>
 
 <svelte:head>
   <title>Access Denied — WritingDesk</title>

@@ -34,7 +34,7 @@ function parseFile(slug: string, path: string, sha: string, raw: string): Post {
 }
 
 function serialize(frontmatter: Frontmatter, body: string): string {
-  return matter.stringify(body, frontmatter as Record<string, unknown>)
+  return matter.stringify(body, frontmatter as unknown as Record<string, unknown>)
 }
 
 export async function listPosts(): Promise<PostSummary[]> {

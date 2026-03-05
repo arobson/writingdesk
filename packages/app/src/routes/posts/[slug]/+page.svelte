@@ -1,39 +1,118 @@
 <script lang="ts">
+  import { enhance } from '$app/forms'
+  import { marked } from 'marked'
+  import { untrack } from 'svelte'
   import type { PageData, ActionData } from './$types'
-  import { formatDate } from '$lib/utils.js'
 
   let { data, form }: { data: PageData; form: ActionData } = $props()
 
-  let post = $derived(data.post)
-  let sha = $state(data.post.sha)
-  let title = $state(data.post.frontmatter.title)
-  let slug = $state(data.post.slug)
-  let description = $state(data.post.frontmatter.description ?? '')
-  let pubDate = $state(data.post.frontmatter.pubDate ?? '')
-  let heroImage = $state(data.post.frontmatter.heroImage ?? '')
-  let tags = $state((data.post.frontmatter.tags ?? []).join(', '))
-  let body = $state(data.post.body)
-  let draft = $state(data.post.frontmatter.draft !== false)
+  // Editable fields — captured once at load; server sync happens via $effect below.
+  // untrack() suppresses Svelte's "initial value only" warning: we handle updates manually.
+  let sha = $state(untrack(() => data.post.sha))
+  let slug = $state(untrack(() => data.post.slug))
+  let title = $state(untrack(() => data.post.frontmatter.title))
+  let description = $state(untrack(() => data.post.frontmatter.description ?? ''))
+  let pubDate = $state(untrack(() => data.post.frontmatter.pubDate ?? ''))
+  let heroImage = $state(untrack(() => data.post.frontmatter.heroImage ?? ''))
+  let tags = $state(untrack(() => (data.post.frontmatter.tags ?? []).join(', ')))
+  let body = $state(untrack(() => data.post.body))
+  let draft = $state(untrack(() => data.post.frontmatter.draft !== false))
+
   let showPreview = $state(false)
   let showDeleteConfirm = $state(false)
 
-  // Update sha after successful save
+  // Sync sha and status after server actions that reload page data (publish/unpublish)
   $effect(() => {
-    if (form?.sha) sha = form.sha
+    sha = data.post.sha
+    draft = data.post.frontmatter.draft !== false
   })
+
+  // Sync sha after explicit save form action returns new sha
+  $effect(() => {
+    if (form?.sha) sha = form.sha as string
+  })
+
+  // --- Auto-save ---
+  let saveStatus = $state<'saved' | 'saving' | 'unsaved' | 'error'>('saved')
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const slugChanged = $derived(slug !== data.post.slug)
+
+  function scheduleSave() {
+    if (slugChanged) return // slug rename requires explicit save + redirect
+    saveStatus = 'unsaved'
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(doAutoSave, 3000)
+  }
+
+  async function doAutoSave() {
+    saveStatus = 'saving'
+    try {
+      const res = await fetch(`/api/posts/${data.post.slug}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sha,
+          frontmatter: {
+            title,
+            description,
+            pubDate,
+            heroImage: heroImage || undefined,
+            tags: tags.split(',').map((t: string) => t.trim()).filter(Boolean),
+            draft,
+          },
+          body,
+        }),
+      })
+      if (res.ok) {
+        const json = await res.json() as { sha: string }
+        sha = json.sha
+        saveStatus = 'saved'
+      } else {
+        saveStatus = 'error'
+      }
+    } catch {
+      saveStatus = 'error'
+    }
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault()
+      doAutoSave()
+    }
+  }
+
+  // --- Preview rendering ---
+  const renderedPreview = $derived(marked.parse(body) as string)
+
+  // --- Save status label ---
+  const statusLabel = $derived(
+    saveStatus === 'saving' ? 'Saving…'
+    : saveStatus === 'unsaved' ? 'Unsaved changes'
+    : saveStatus === 'error' ? 'Save failed'
+    : 'Saved',
+  )
+  const statusClass = $derived(
+    saveStatus === 'error' ? 'text-red-500'
+    : saveStatus === 'unsaved' || saveStatus === 'saving' ? 'text-amber-500'
+    : 'text-gray-400',
+  )
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 <svelte:head>
-  <title>{title} — WritingDesk</title>
+  <title>{title || 'Untitled'} — WritingDesk</title>
 </svelte:head>
 
-<div class="flex items-center justify-between mb-6">
-  <div class="flex items-center gap-3">
-    <a href="/" class="text-sm text-gray-400 hover:text-gray-700">← Posts</a>
-    <span class="text-gray-200">/</span>
-    <span class="text-sm font-mono text-gray-500">{slug}</span>
+<!-- Header -->
+<div class="flex items-center justify-between mb-6 gap-4">
+  <div class="flex items-center gap-3 min-w-0">
+    <a href="/" class="text-sm text-gray-400 hover:text-gray-700 shrink-0">← Posts</a>
+    <span class="text-gray-200 shrink-0">/</span>
+    <span class="text-sm font-mono text-gray-500 truncate">{slug}</span>
     <span
-      class="text-xs px-2 py-0.5 rounded-full {draft
+      class="text-xs px-2 py-0.5 rounded-full shrink-0 {draft
         ? 'bg-yellow-50 text-yellow-700'
         : 'bg-green-50 text-green-700'}"
     >
@@ -41,20 +120,25 @@
     </span>
   </div>
 
-  {#if form?.error}
-    <p class="text-sm text-red-600">{form.error}</p>
-  {/if}
+  <div class="flex items-center gap-4 shrink-0">
+    <span class="text-xs {statusClass}">{statusLabel}</span>
+    {#if slugChanged}
+      <span class="text-xs text-amber-600">Slug changed — save to apply</span>
+    {/if}
+  </div>
 </div>
 
 <div class="grid grid-cols-[280px_1fr] gap-6 items-start">
   <!-- Frontmatter panel -->
   <aside class="border border-gray-200 rounded-lg p-4 space-y-4 text-sm sticky top-6">
+
     <div>
       <label for="fm-title" class="block font-medium text-gray-700 mb-1">Title</label>
       <input
         id="fm-title"
         type="text"
         bind:value={title}
+        oninput={scheduleSave}
         class="w-full border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-400"
       />
     </div>
@@ -65,7 +149,7 @@
         id="fm-slug"
         type="text"
         bind:value={slug}
-        class="w-full border border-gray-200 rounded px-2 py-1.5 font-mono focus:outline-none focus:ring-1 focus:ring-gray-400"
+        class="w-full border border-gray-200 rounded px-2 py-1.5 font-mono focus:outline-none focus:ring-1 focus:ring-gray-400 {slugChanged ? 'border-amber-300' : ''}"
       />
     </div>
 
@@ -74,6 +158,7 @@
       <textarea
         id="fm-desc"
         bind:value={description}
+        oninput={scheduleSave}
         rows="3"
         class="w-full border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-400"
       ></textarea>
@@ -85,6 +170,7 @@
         id="fm-date"
         type="date"
         bind:value={pubDate}
+        onchange={scheduleSave}
         class="w-full border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-400"
       />
     </div>
@@ -95,6 +181,7 @@
         id="fm-tags"
         type="text"
         bind:value={tags}
+        oninput={scheduleSave}
         placeholder="svelte, web"
         class="w-full border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-400"
       />
@@ -106,14 +193,16 @@
         id="fm-hero"
         type="text"
         bind:value={heroImage}
+        oninput={scheduleSave}
         placeholder="/images/post.jpg"
         class="w-full border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-400"
       />
     </div>
 
     <div class="pt-2 border-t border-gray-100 space-y-2">
-      <!-- Save -->
-      <form method="POST" action="?/save">
+
+      <!-- Explicit save (handles slug rename) -->
+      <form method="POST" action="?/save" use:enhance>
         <input type="hidden" name="sha" value={sha} />
         <input type="hidden" name="slug" value={slug} />
         <input type="hidden" name="title" value={title} />
@@ -125,29 +214,29 @@
         <input type="hidden" name="draft" value={String(draft)} />
         <button
           type="submit"
-          class="w-full px-3 py-1.5 bg-gray-900 text-white rounded hover:bg-gray-700"
+          class="w-full px-3 py-1.5 bg-gray-900 text-white rounded hover:bg-gray-700 text-sm"
         >
-          Save
+          Save{slugChanged ? ' & rename' : ''}
         </button>
       </form>
 
       <!-- Publish / Unpublish -->
       {#if draft}
-        <form method="POST" action="?/publish">
+        <form method="POST" action="?/publish" use:enhance>
           <input type="hidden" name="sha" value={sha} />
           <button
             type="submit"
-            class="w-full px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-500"
+            class="w-full px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-500 text-sm"
           >
             Publish
           </button>
         </form>
       {:else}
-        <form method="POST" action="?/unpublish">
+        <form method="POST" action="?/unpublish" use:enhance>
           <input type="hidden" name="sha" value={sha} />
           <button
             type="submit"
-            class="w-full px-3 py-1.5 border border-gray-200 text-gray-700 rounded hover:bg-gray-50"
+            class="w-full px-3 py-1.5 border border-gray-200 text-gray-700 rounded hover:bg-gray-50 text-sm"
           >
             Unpublish
           </button>
@@ -165,11 +254,11 @@
         </button>
       {:else}
         <div class="border border-red-200 rounded p-2 text-center">
-          <p class="text-xs text-red-600 mb-2">Delete this post permanently?</p>
-          <form method="POST" action="?/delete" class="inline">
+          <p class="text-xs text-red-600 mb-2">Delete permanently?</p>
+          <form method="POST" action="?/delete" use:enhance class="inline">
             <input type="hidden" name="sha" value={sha} />
             <button type="submit" class="text-xs text-red-600 font-medium hover:underline">
-              Confirm delete
+              Confirm
             </button>
           </form>
           <button
@@ -184,9 +273,10 @@
     </div>
   </aside>
 
-  <!-- Editor -->
+  <!-- Editor / Preview -->
   <div>
-    <div class="flex justify-end mb-2">
+    <div class="flex justify-end mb-2 gap-3">
+      <span class="text-xs text-gray-400 self-center">Ctrl+S to save</span>
       <button
         type="button"
         onclick={() => (showPreview = !showPreview)}
@@ -197,13 +287,13 @@
     </div>
 
     {#if showPreview}
-      <div class="prose prose-sm max-w-none border border-gray-200 rounded-lg p-4 min-h-[500px]">
-        <!-- Placeholder: rendered preview will be wired in next iteration -->
-        <pre class="whitespace-pre-wrap font-sans text-sm text-gray-600">{body}</pre>
+      <div class="prose prose-sm max-w-none border border-gray-200 rounded-lg p-6 min-h-[600px] bg-white">
+        {@html renderedPreview}
       </div>
     {:else}
       <textarea
         bind:value={body}
+        oninput={scheduleSave}
         class="w-full h-[600px] border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono leading-relaxed focus:outline-none focus:ring-1 focus:ring-gray-400 resize-none"
         placeholder="Write your post in markdown…"
       ></textarea>
