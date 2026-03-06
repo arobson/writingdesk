@@ -31,7 +31,12 @@ function parseFile(slug: string, path: string, sha: string, raw: string): Post {
 }
 
 function serialize(frontmatter: Frontmatter, body: string): string {
-  return matter.stringify(body, frontmatter as unknown as Record<string, unknown>)
+  // js-yaml (used by gray-matter) throws on undefined values — strip them before
+  // serializing so optional frontmatter fields don't cause a crash.
+  const clean = Object.fromEntries(
+    Object.entries(frontmatter).filter(([, v]) => v !== undefined),
+  )
+  return matter.stringify(body, clean)
 }
 
 // ── Post CRUD ────────────────────────────────────────────────────────────────
@@ -208,4 +213,17 @@ export async function commitFiles(
 export async function getAuthenticatedUser(token: string): Promise<{ id: number; login: string; avatarUrl: string }> {
   const { data } = await octokit(token).users.getAuthenticated()
   return { id: data.id, login: data.login, avatarUrl: data.avatar_url }
+}
+
+export async function listUserRepos(token: string): Promise<Array<{ owner: string; repo: string }>> {
+  const { data } = await octokit(token).repos.listForAuthenticatedUser({
+    sort: 'updated',
+    per_page: 100,
+  })
+  return data.map(r => ({ owner: r.owner.login, repo: r.name }))
+}
+
+export async function checkRepoAccess(token: string, owner: string, repo: string): Promise<void> {
+  // Throws if the repo doesn't exist or the token lacks access
+  await octokit(token).repos.get({ owner, repo })
 }

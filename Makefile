@@ -15,12 +15,12 @@
 # Variables (override on the command line):
 #   IMAGE   Docker image name   (default: writingdesk)
 #   TAG     Docker image tag    (default: latest)
-#   PORT    Host port to bind   (default: 3000)
+#   PORT    Host port to bind   (default: 4080)
 # ==============================================================================
 
 IMAGE ?= writingdesk
 TAG   ?= latest
-PORT  ?= 3000
+PORT  ?= 4080
 
 ENV_FILE := packages/app/.env
 APP      := @writingdesk/app
@@ -51,7 +51,7 @@ install: node_modules/.package-lock.json  ## Install all npm dependencies
 
 dev: install  ## Start the SvelteKit dev server with hot reload (requires .env)
 	@test -f $(ENV_FILE) || { echo "Run 'make setup' first to create $(ENV_FILE)"; exit 1; }
-	npm run dev
+	DESK_PORT=$(PORT) npm run dev
 
 build: install  ## Build the SvelteKit application for production
 	npm run build

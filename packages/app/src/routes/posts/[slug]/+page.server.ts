@@ -8,7 +8,10 @@ export const load: PageServerLoad = async ({ locals, params }) => {
   const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
   try {
     const post = await getPost(ctx, params.slug)
-    return { post }
+    return {
+      post,
+      blog: { repoOwner: locals.blog.repoOwner, repoName: locals.blog.repoName },
+    }
   } catch {
     throw error(404, 'Post not found')
   }

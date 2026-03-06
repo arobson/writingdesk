@@ -80,10 +80,45 @@
       e.preventDefault()
       doAutoSave()
     }
+    if (e.altKey && e.key === 'p') {
+      e.preventDefault()
+      showPreview = !showPreview
+    }
   }
 
-  // --- Preview rendering ---
+  // --- Markdown preview ---
   const renderedPreview = $derived(marked.parse(body) as string)
+
+  // --- Build preview ---
+  type BuildStatus = 'idle' | 'building' | 'success' | 'error'
+  let buildStatus = $state<BuildStatus>('idle')
+  let buildError = $state<string | null>(null)
+  let pollTimer: ReturnType<typeof setInterval> | null = null
+
+  async function triggerBuild() {
+    buildStatus = 'building'
+    buildError = null
+    await fetch('/api/preview', { method: 'POST' })
+    startPolling()
+  }
+
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer)
+    pollTimer = setInterval(async () => {
+      const res = await fetch('/api/preview')
+      const st = await res.json() as { status: BuildStatus; error?: string }
+      buildStatus = st.status
+      if (st.status !== 'building') {
+        clearInterval(pollTimer!)
+        pollTimer = null
+        if (st.status === 'error') buildError = st.error ?? 'Build failed'
+      }
+    }, 2500)
+  }
+
+  const previewUrl = $derived(
+    `/preview/${data.blog.repoOwner}/${data.blog.repoName}/blog/${data.post.slug}/`,
+  )
 
   // --- Save status label ---
   const statusLabel = $derived(
@@ -275,15 +310,57 @@
 
   <!-- Editor / Preview -->
   <div>
-    <div class="flex justify-end mb-2 gap-3">
-      <span class="text-xs text-gray-400 self-center">Ctrl+S to save</span>
-      <button
-        type="button"
-        onclick={() => (showPreview = !showPreview)}
-        class="text-sm text-gray-500 hover:text-gray-700"
-      >
-        {showPreview ? 'Editor' : 'Preview'}
-      </button>
+    <div class="flex items-center justify-between mb-2 gap-3">
+      <div class="flex items-center gap-3">
+        <!-- Build preview -->
+        {#if buildStatus === 'idle'}
+          <button
+            type="button"
+            onclick={triggerBuild}
+            class="text-xs px-2.5 py-1 border border-gray-200 rounded hover:bg-gray-50 text-gray-600"
+          >
+            Build preview
+          </button>
+        {:else if buildStatus === 'building'}
+          <span class="text-xs text-amber-500">Building…</span>
+        {:else if buildStatus === 'success'}
+          <a
+            href={previewUrl}
+            target="_blank"
+            rel="noopener"
+            class="text-xs px-2.5 py-1 border border-green-200 rounded text-green-700 hover:bg-green-50"
+          >
+            Open preview ↗
+          </a>
+          <button
+            type="button"
+            onclick={triggerBuild}
+            class="text-xs text-gray-400 hover:text-gray-600"
+          >
+            Rebuild
+          </button>
+        {:else}
+          <span class="text-xs text-red-500" title={buildError ?? ''}>Build failed</span>
+          <button
+            type="button"
+            onclick={triggerBuild}
+            class="text-xs text-gray-400 hover:text-gray-600"
+          >
+            Retry
+          </button>
+        {/if}
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-400">Ctrl+S · Alt+P</span>
+        <button
+          type="button"
+          onclick={() => (showPreview = !showPreview)}
+          class="text-sm text-gray-500 hover:text-gray-700"
+        >
+          {showPreview ? 'Editor' : 'Preview'}
+        </button>
+      </div>
     </div>
 
     {#if showPreview}

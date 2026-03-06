@@ -82,8 +82,8 @@ function askSecret(prompt) {
     function onKey(ch) {
       if (ch === '\r' || ch === '\n') {
         process.stdin.setRawMode(false)
-        process.stdin.pause()
         process.stdin.removeListener('data', onKey)
+        // Do NOT pause stdin — readline needs it flowing for subsequent ask() calls
         process.stdout.write('\n')
         resolve(buf)
       } else if (ch === '\u0003') {          // Ctrl+C
@@ -148,16 +148,32 @@ const callbackUrl = `${origin}/auth/github/callback`
 
 sep()
 console.log(`  ${bold('Step 2 of 3 — GitHub OAuth App')}\n`)
-console.log(info(`You need a GitHub OAuth App.  Opening the creation form now…\n`))
-console.log(`  Fill in the form with these values:\n`)
-console.log(`    ${dim('Application name:')}  WritingDesk`)
-console.log(`    ${dim('Homepage URL:')}      ${origin}`)
-console.log(`    ${dim('Callback URL:')}      ${C.cyan}${callbackUrl}${C.reset}`)
-console.log(`    ${dim('(Everything else can be left blank.)')}`)
+console.log(info('Do you need to create a new GitHub OAuth App, or do you already have one?'))
+console.log()
+console.log(`    ${dim('[1]')}  Create a new OAuth App  ${dim('(opens github.com in your browser)')}`)
+console.log(`    ${dim('[2]')}  I already have one      ${dim('(go straight to credentials)')}`)
 console.log()
 
-openBrowser('https://github.com/settings/applications/new')
-await ask(`  Press Enter once you have created the app and are on the credentials page › `)
+const oauthChoice = await askValid(
+  `  Choice [1/2]  › `,
+  (v) => (v === '1' || v === '2') ? null : 'Enter 1 or 2.',
+)
+
+if (oauthChoice === '1') {
+  console.log()
+  console.log(info('Opening the creation form…\n'))
+  console.log(`  Fill in the form with these values:\n`)
+  console.log(`    ${dim('Application name:')}  WritingDesk`)
+  console.log(`    ${dim('Homepage URL:')}      ${origin}`)
+  console.log(`    ${dim('Callback URL:')}      ${C.cyan}${callbackUrl}${C.reset}`)
+  console.log(`    ${dim('(Everything else can be left blank.)')}`)
+  console.log()
+  openBrowser('https://github.com/settings/applications/new')
+  await ask(`  Press Enter once you have created the app and are on the credentials page › `)
+} else {
+  console.log()
+  console.log(info(`Make sure the callback URL is set to:  ${C.cyan}${callbackUrl}${C.reset}`))
+}
 console.log()
 
 const clientId = await askValid(
@@ -218,8 +234,10 @@ TOKEN_SECRET=${tokenSecret}
 # Public URL of this WritingDesk instance (no trailing slash)
 ORIGIN=${origin}
 
-# Persistent data directory — mount a PVC here in Kubernetes
-# DATA_DIR=/var/writingdesk
+# Persistent data directory (SQLite DB + git workspaces).
+# In production, mount a PersistentVolumeClaim here.
+# For local dev this points to the project's data/ folder (gitignored).
+DATA_DIR=${join(ROOT, 'data')}
 `
 
 writeFileSync(ENV_FILE, content, { mode: 0o600 })

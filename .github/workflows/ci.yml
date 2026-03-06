@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: writingdesk
+
+jobs:
+  check:
+    name: Check & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run check
+      - run: npm test --workspace=@writingdesk/app
+
+  build-and-push:
+    name: Build & Push
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN }}
+
+      - name: Log in to DOCR
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build and push image
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          REGISTRY="registry.digitalocean.com/${{ secrets.DO_REGISTRY_NAME }}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          docker build -f packages/app/Dockerfile -t "${IMAGE}:sha-${SHORT_SHA}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:sha-${SHORT_SHA}"
+          docker push "${IMAGE}:latest"
+          echo "IMAGE_TAG=sha-${SHORT_SHA}" >> $GITHUB_ENV
+

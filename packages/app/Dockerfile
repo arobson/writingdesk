@@ -7,6 +7,7 @@ COPY packages/app ./packages/app
 RUN npm run build --workspace=@writingdesk/app
 
 FROM node:20-alpine
+RUN apk add --no-cache git
 RUN addgroup -S writingdesk && adduser -S writingdesk -G writingdesk
 WORKDIR /app
 COPY --from=builder /app/packages/app/build ./build

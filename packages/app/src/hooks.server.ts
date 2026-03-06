@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm'
 // opens the DB connection, and applies migrations.
 ensureStarted()
 
-const PUBLIC_PATHS = ['/auth/']
+const PUBLIC_PATHS = ['/auth/', '/preview/']
 
 export const handle: Handle = async ({ event, resolve }) => {
   const isPublic = PUBLIC_PATHS.some(p => event.url.pathname.startsWith(p))

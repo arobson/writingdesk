@@ -37,7 +37,11 @@ export async function createSession(payload: SessionPayload, cookies: Cookies): 
   cookies.set(COOKIE_NAME, token, {
     path: '/',
     httpOnly: true,
-    sameSite: 'strict',
+    // 'lax' (not 'strict') is required for OAuth flows: the callback arrives via
+    // a cross-site redirect from GitHub, and strict cookies are not forwarded in
+    // that navigation context, causing an infinite redirect loop back to GitHub.
+    // Lax still blocks cross-site POST requests, which is the real CSRF risk.
+    sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     maxAge: SESSION_SECONDS,
   })
