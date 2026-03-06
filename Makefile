@@ -33,7 +33,7 @@ node_modules/.package-lock.json: package.json packages/app/package.json
 .PHONY: install dev build lint check \
         test test-watch test-coverage \
         docker-build docker-run docker-push \
-        setup start clean help
+        setup start argo-tunnel clean help
 
 SETUP_SCRIPT := scripts/setup.mjs
 
@@ -97,6 +97,9 @@ docker-run: $(ENV_FILE)  ## Run the image locally with .env  (PORT=3000)
 
 docker-push:  ## Push the image to a registry  (set IMAGE and TAG first)
 	docker push $(IMAGE):$(TAG)
+
+argo-tunnel:  ## Forward ArgoCD to localhost:8383  (kubectl must be configured)
+	kubectl port-forward svc/argocd-server -n argocd 8383:80
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Local environment setup
