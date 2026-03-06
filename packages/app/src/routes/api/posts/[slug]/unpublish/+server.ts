@@ -1,11 +1,13 @@
-import { json } from '@sveltejs/kit'
+import { json, error, redirect } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { unpublishPost } from '$lib/server/posts.js'
-import { requireRole } from '$lib/server/auth.js'
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
-  requireRole(locals.user, 'publisher')
+  if (!locals.user) throw redirect(303, '/auth/github')
+  if (!locals.blog) throw error(403, 'No blog configured')
+
+  const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
   const { sha } = await request.json() as { sha: string }
-  const newSha = await unpublishPost(params.slug, sha)
+  const newSha = await unpublishPost(ctx, params.slug, sha)
   return json({ sha: newSha })
 }

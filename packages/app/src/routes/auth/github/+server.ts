@@ -13,10 +13,10 @@ export const GET: RequestHandler = ({ cookies, url }) => {
     maxAge: 60 * 10,
   })
 
-  const origin = url.origin
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: `${origin}/auth/github/callback`,
+    redirect_uri: `${url.origin}/auth/github/callback`,
+    scope: 'repo user:email',
     state,
   })
 

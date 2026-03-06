@@ -1,13 +1,13 @@
 import { error, redirect } from '@sveltejs/kit'
 import type { Actions, PageServerLoad } from './$types'
 import { getPost, updatePost, publishPost, unpublishPost, deletePost } from '$lib/server/posts.js'
-import { requireRole } from '$lib/server/auth.js'
 import { isValidSlug } from '$lib/utils.js'
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-  requireRole(locals.user, 'author')
+  if (!locals.blog) throw redirect(303, '/onboarding')
+  const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
   try {
-    const post = await getPost(params.slug)
+    const post = await getPost(ctx, params.slug)
     return { post }
   } catch {
     throw error(404, 'Post not found')
@@ -16,7 +16,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 
 export const actions: Actions = {
   save: async ({ locals, params, request }) => {
-    requireRole(locals.user, 'author')
+    if (!locals.blog) throw redirect(303, '/onboarding')
+    const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
 
     const form = await request.formData()
     const sha = String(form.get('sha') ?? '')
@@ -25,14 +26,13 @@ export const actions: Actions = {
     const description = String(form.get('description') ?? '').trim()
     const pubDate = String(form.get('pubDate') ?? '').trim()
     const heroImage = String(form.get('heroImage') ?? '').trim() || undefined
-    const tagsRaw = String(form.get('tags') ?? '')
-    const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean)
+    const tags = String(form.get('tags') ?? '').split(',').map(t => t.trim()).filter(Boolean)
     const body = String(form.get('body') ?? '')
     const draft = form.get('draft') !== 'false'
 
     if (!isValidSlug(newSlug)) return { error: 'Invalid slug' }
 
-    const newSha = await updatePost({
+    const newSha = await updatePost(ctx, {
       slug: newSlug,
       previousSlug: params.slug !== newSlug ? params.slug : undefined,
       frontmatter: { title, description, pubDate, heroImage, tags, draft },
@@ -45,26 +45,26 @@ export const actions: Actions = {
   },
 
   publish: async ({ locals, params, request }) => {
-    requireRole(locals.user, 'publisher')
-    const form = await request.formData()
-    const sha = String(form.get('sha') ?? '')
-    const newSha = await publishPost(params.slug, sha)
+    if (!locals.blog) throw redirect(303, '/onboarding')
+    const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
+    const sha = String((await request.formData()).get('sha') ?? '')
+    const newSha = await publishPost(ctx, params.slug, sha)
     return { sha: newSha }
   },
 
   unpublish: async ({ locals, params, request }) => {
-    requireRole(locals.user, 'publisher')
-    const form = await request.formData()
-    const sha = String(form.get('sha') ?? '')
-    const newSha = await unpublishPost(params.slug, sha)
+    if (!locals.blog) throw redirect(303, '/onboarding')
+    const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
+    const sha = String((await request.formData()).get('sha') ?? '')
+    const newSha = await unpublishPost(ctx, params.slug, sha)
     return { sha: newSha }
   },
 
   delete: async ({ locals, params, request }) => {
-    requireRole(locals.user, 'publisher')
-    const form = await request.formData()
-    const sha = String(form.get('sha') ?? '')
-    await deletePost(params.slug, sha)
+    if (!locals.blog) throw redirect(303, '/onboarding')
+    const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
+    const sha = String((await request.formData()).get('sha') ?? '')
+    await deletePost(ctx, params.slug, sha)
     throw redirect(303, '/')
   },
 }

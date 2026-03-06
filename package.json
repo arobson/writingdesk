@@ -3,6 +3,7 @@
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "dev": "npm run dev --workspace=packages/app",
     "build": "npm run build --workspace=packages/app",
     "check": "npm run check --workspace=packages/app"

@@ -1,7 +1,10 @@
 import { redirect, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { getConfig } from '$lib/server/config.js'
-import { createSession, resolveRole } from '$lib/server/auth.js'
+import { createSession, encryptToken } from '$lib/server/auth.js'
+import { getAuthenticatedUser } from '$lib/server/github/index.js'
+import { getDb, schema } from '$lib/server/db/index.js'
+import { eq } from 'drizzle-orm'
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
   const code = url.searchParams.get('code')
@@ -22,30 +25,41 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   })
 
   const tokenData = await tokenRes.json() as { access_token?: string; error?: string }
+  if (tokenData.error || !tokenData.access_token) throw redirect(303, '/auth/denied')
 
-  if (tokenData.error || !tokenData.access_token) {
-    throw redirect(303, '/auth/denied')
+  const accessToken = tokenData.access_token
+  const ghUser = await getAuthenticatedUser(accessToken)
+
+  // Upsert user in the database — update token on every login so it stays fresh
+  const db = getDb()
+  const now = new Date().toISOString()
+  const encryptedToken = encryptToken(accessToken)
+
+  const [existing] = await db.select().from(schema.users).where(eq(schema.users.githubId, ghUser.id))
+
+  let userId: number
+  if (existing) {
+    await db.update(schema.users)
+      .set({ login: ghUser.login, avatarUrl: ghUser.avatarUrl, accessToken: encryptedToken })
+      .where(eq(schema.users.githubId, ghUser.id))
+    userId = existing.id
+  } else {
+    const [inserted] = await db.insert(schema.users).values({
+      githubId: ghUser.id,
+      login: ghUser.login,
+      avatarUrl: ghUser.avatarUrl,
+      accessToken: encryptedToken,
+      createdAt: now,
+    }).returning({ id: schema.users.id })
+    userId = inserted.id
   }
 
-  const userRes = await fetch('https://api.github.com/user', {
-    headers: {
-      Authorization: `Bearer ${tokenData.access_token}`,
-      Accept: 'application/vnd.github+json',
-    },
-  })
+  await createSession({
+    userId,
+    githubId: ghUser.id,
+    login: ghUser.login,
+    avatarUrl: ghUser.avatarUrl,
+  }, cookies)
 
-  if (!userRes.ok) throw redirect(303, '/auth/denied')
-
-  const { id: githubUserId, login, avatar_url: avatarUrl } = await userRes.json() as {
-    id: number
-    login: string
-    avatar_url: string
-  }
-
-  // User token is discarded after this — we use installation token for all ops
-  const role = await resolveRole(login)
-  if (!role) throw redirect(303, '/auth/denied')
-
-  await createSession({ githubUserId, login, avatarUrl, role }, cookies)
   throw redirect(303, '/')
 }

@@ -4,13 +4,13 @@
 #
 #   make help          Show all targets
 #
-# Quick start (local dev):
-#   make setup         Scaffold packages/app/.env from .env.example
+# Quick start:
+#   make setup         Interactive setup — creates packages/app/.env
 #   make dev           Start the SvelteKit dev server with hot reload
 #
-# Quick start (local Docker):
-#   make setup         Scaffold packages/app/.env from .env.example
-#   make start         Build the Docker image and run it locally
+# Quick start (Docker):
+#   make setup         Interactive setup — creates packages/app/.env
+#   make start         Docker build + run (requires .env)
 #
 # Variables (override on the command line):
 #   IMAGE   Docker image name   (default: writingdesk)
@@ -34,6 +34,8 @@ node_modules/.package-lock.json: package.json packages/app/package.json
         test test-watch test-coverage \
         docker-build docker-run docker-push \
         setup start clean help
+
+SETUP_SCRIPT := scripts/setup.mjs
 
 .DEFAULT_GOAL := help
 
@@ -90,8 +92,7 @@ docker-run: $(ENV_FILE)  ## Run the image locally with .env  (PORT=3000)
 	docker run --rm \
 	  --env-file $(ENV_FILE) \
 	  -p $(PORT):3000 \
-	  -v writingdesk_repo:/var/writingdesk/repo \
-	  -v writingdesk_builds:/var/writingdesk/astro-build \
+	  -v writingdesk_data:/var/writingdesk \
 	  $(IMAGE):$(TAG)
 
 docker-push:  ## Push the image to a registry  (set IMAGE and TAG first)
@@ -101,21 +102,17 @@ docker-push:  ## Push the image to a registry  (set IMAGE and TAG first)
 # Local environment setup
 # ──────────────────────────────────────────────────────────────────────────────
 
-# File target — only runs when .env does not exist yet
-$(ENV_FILE):
-	@cp packages/app/.env.example $(ENV_FILE)
-	@JWT=$$(openssl rand -hex 32) && sed -i "s|JWT_SECRET=.*|JWT_SECRET=$$JWT|" $(ENV_FILE)
-	@echo ""
-	@echo "Created $(ENV_FILE) with a generated JWT_SECRET."
-	@echo "Open it and fill in your GitHub App credentials before continuing."
-	@echo ""
-	@echo "  For automated GitHub App creation, run:"
-	@echo "    npx writingdesk-setup"
-	@echo ""
+setup: install  ## Interactive setup — GitHub OAuth App + generate secrets → writes .env
+	node $(SETUP_SCRIPT)
 
-setup: $(ENV_FILE)  ## Create packages/app/.env and generate a random JWT_SECRET
-
-start: setup docker-build docker-run  ## Setup → Docker build → Docker run (full local stack)
+start: docker-build  ## Docker build → run  (run 'make setup' first if .env is missing)
+	@test -f $(ENV_FILE) || { \
+	  echo ""; \
+	  echo "  packages/app/.env not found. Run 'make setup' first."; \
+	  echo ""; \
+	  exit 1; \
+	}
+	$(MAKE) docker-run
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cleanup

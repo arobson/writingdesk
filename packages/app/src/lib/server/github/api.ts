@@ -1,15 +1,12 @@
-import { createAppAuth } from '@octokit/auth-app'
 import { Octokit } from '@octokit/rest'
 import matter from 'gray-matter'
-import { getConfig } from '../config.js'
 import type { Frontmatter, Post, PostSummary } from '../../types.js'
 
-function octokit(): Octokit {
-  const { appId, privateKey, installationId } = getConfig().github
-  return new Octokit({
-    authStrategy: createAppAuth,
-    auth: { appId, privateKey, installationId },
-  })
+// Every function takes the user's decrypted OAuth token so there are no
+// module-level singletons — each request gets a fresh, correctly-scoped client.
+
+function octokit(token: string): Octokit {
+  return new Octokit({ auth: token })
 }
 
 function decode(encoded: string): string {
@@ -37,13 +34,16 @@ function serialize(frontmatter: Frontmatter, body: string): string {
   return matter.stringify(body, frontmatter as unknown as Record<string, unknown>)
 }
 
-export async function listPosts(): Promise<PostSummary[]> {
-  const { owner, repo, contentPath, defaultBranch } = getConfig().github
-  const kit = octokit()
+// ── Post CRUD ────────────────────────────────────────────────────────────────
 
+const CONTENT_PATH = 'src/content/blog'
+const DEFAULT_BRANCH = 'main'
+
+export async function listPosts(token: string, owner: string, repo: string): Promise<PostSummary[]> {
+  const kit = octokit(token)
   let items: Array<{ name: string; path: string; type: string }>
   try {
-    const { data } = await kit.repos.getContent({ owner, repo, path: contentPath, ref: defaultBranch })
+    const { data } = await kit.repos.getContent({ owner, repo, path: CONTENT_PATH, ref: DEFAULT_BRANCH })
     if (!Array.isArray(data)) return []
     items = data
   } catch (err: unknown) {
@@ -52,12 +52,10 @@ export async function listPosts(): Promise<PostSummary[]> {
   }
 
   const mdFiles = items.filter(f => f.type === 'file' && f.name.endsWith('.md'))
-
   const posts = await Promise.all(
     mdFiles.map(async (file) => {
       try {
-        const post = await getPost(file.name.replace(/\.md$/, ''))
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const post = await getPost(token, owner, repo, file.name.replace(/\.md$/, ''))
         const { body: _body, ...summary } = post
         return summary as PostSummary
       } catch {
@@ -73,78 +71,141 @@ export async function listPosts(): Promise<PostSummary[]> {
   })
 }
 
-export async function getPost(slug: string): Promise<Post> {
-  const { owner, repo, contentPath, defaultBranch } = getConfig().github
-  const path = `${contentPath}/${slug}.md`
-  const { data } = await octokit().repos.getContent({ owner, repo, path, ref: defaultBranch })
+export async function getPost(token: string, owner: string, repo: string, slug: string): Promise<Post> {
+  const path = `${CONTENT_PATH}/${slug}.md`
+  const { data } = await octokit(token).repos.getContent({ owner, repo, path, ref: DEFAULT_BRANCH })
   if (Array.isArray(data) || data.type !== 'file') throw new Error(`Not a file: ${path}`)
   return parseFile(slug, path, data.sha, decode(data.content))
 }
 
 export interface SaveOptions {
+  token: string
+  owner: string
+  repo: string
   slug: string
   frontmatter: Frontmatter
   body: string
   sha?: string
-  branch?: string
 }
 
-export async function savePost({ slug, frontmatter, body, sha, branch }: SaveOptions): Promise<string> {
-  const { owner, repo, contentPath, defaultBranch } = getConfig().github
-  const path = `${contentPath}/${slug}.md`
-  const targetBranch = branch ?? defaultBranch
+export async function savePost({ token, owner, repo, slug, frontmatter, body, sha }: SaveOptions): Promise<string> {
+  const path = `${CONTENT_PATH}/${slug}.md`
   const content = encode(serialize(frontmatter, body))
   const message = sha
     ? `content: update "${frontmatter.title}"`
     : `content: add "${frontmatter.title}"`
 
-  const { data } = await octokit().repos.createOrUpdateFileContents({
+  const { data } = await octokit(token).repos.createOrUpdateFileContents({
     owner, repo, path, message, content,
-    branch: targetBranch,
+    branch: DEFAULT_BRANCH,
     ...(sha ? { sha } : {}),
   })
 
   return data.content!.sha!
 }
 
-export async function deletePost(slug: string, sha: string): Promise<void> {
-  const { owner, repo, contentPath, defaultBranch } = getConfig().github
-  const path = `${contentPath}/${slug}.md`
-  await octokit().repos.deleteFile({
+export async function deletePost(token: string, owner: string, repo: string, slug: string, sha: string): Promise<void> {
+  const path = `${CONTENT_PATH}/${slug}.md`
+  await octokit(token).repos.deleteFile({
     owner, repo, path, sha,
     message: `content: delete "${slug}"`,
-    branch: defaultBranch,
+    branch: DEFAULT_BRANCH,
   })
 }
 
-export async function createBranch(branchName: string, fromBranch?: string): Promise<void> {
-  const { owner, repo, defaultBranch } = getConfig().github
-  const kit = octokit()
-  const base = fromBranch ?? defaultBranch
-  const { data } = await kit.git.getRef({ owner, repo, ref: `heads/${base}` })
-  await kit.git.createRef({ owner, repo, ref: `refs/heads/${branchName}`, sha: data.object.sha })
+// ── Blog provisioning ────────────────────────────────────────────────────────
+
+export async function createRepo(token: string, name: string, description: string): Promise<{ owner: string; repo: string }> {
+  const kit = octokit(token)
+  const { data } = await kit.repos.createForAuthenticatedUser({
+    name,
+    description,
+    private: false,
+    auto_init: false,
+  })
+  return { owner: data.owner.login, repo: data.name }
 }
 
-export async function mergeBranch(head: string, base: string, commitMessage: string): Promise<string> {
-  const { owner, repo } = getConfig().github
-  const { data } = await octokit().repos.merge({ owner, repo, base, head, commit_message: commitMessage })
-  return (data as { sha: string }).sha
+export async function enableGithubPages(token: string, owner: string, repo: string): Promise<void> {
+  // Enable Pages with GitHub Actions as the build source
+  await octokit(token).request('POST /repos/{owner}/{repo}/pages', {
+    owner,
+    repo,
+    build_type: 'workflow',
+  })
 }
 
-export async function deleteBranch(branchName: string): Promise<void> {
-  const { owner, repo } = getConfig().github
-  await octokit().git.deleteRef({ owner, repo, ref: `heads/${branchName}` })
+export interface CommitFile {
+  path: string
+  content: string  // plain text — will be base64-encoded
 }
 
-export async function getInstallationToken(): Promise<string> {
-  const { appId, privateKey, installationId } = getConfig().github
-  const auth = createAppAuth({ appId, privateKey, installationId })
-  const { token } = await auth({ type: 'installation' })
-  return token
+export async function commitFiles(
+  token: string,
+  owner: string,
+  repo: string,
+  files: CommitFile[],
+  message: string,
+): Promise<void> {
+  const kit = octokit(token)
+
+  // Get or create the default branch ref
+  let baseSha: string
+  try {
+    const { data: ref } = await kit.git.getRef({ owner, repo, ref: 'heads/main' })
+    baseSha = ref.object.sha
+  } catch {
+    // Repo is brand-new — create the initial commit directly
+    const tree = await kit.git.createTree({
+      owner,
+      repo,
+      tree: files.map(f => ({
+        path: f.path,
+        mode: '100644' as const,
+        type: 'blob' as const,
+        content: f.content,
+      })),
+    })
+    const commit = await kit.git.createCommit({
+      owner,
+      repo,
+      message,
+      tree: tree.data.sha,
+      parents: [],
+    })
+    await kit.git.createRef({
+      owner,
+      repo,
+      ref: 'refs/heads/main',
+      sha: commit.data.sha,
+    })
+    return
+  }
+
+  // Repo already has commits — build on top of the existing tree
+  const { data: baseCommit } = await kit.git.getCommit({ owner, repo, commit_sha: baseSha })
+  const tree = await kit.git.createTree({
+    owner,
+    repo,
+    base_tree: baseCommit.tree.sha,
+    tree: files.map(f => ({
+      path: f.path,
+      mode: '100644' as const,
+      type: 'blob' as const,
+      content: f.content,
+    })),
+  })
+  const commit = await kit.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: tree.data.sha,
+    parents: [baseSha],
+  })
+  await kit.git.updateRef({ owner, repo, ref: 'heads/main', sha: commit.data.sha })
 }
 
-export async function getRepoInfo() {
-  const { owner, repo } = getConfig().github
-  const { data } = await octokit().repos.get({ owner, repo })
-  return { fullName: data.full_name, private: data.private, htmlUrl: data.html_url }
+export async function getAuthenticatedUser(token: string): Promise<{ id: number; login: string; avatarUrl: string }> {
+  const { data } = await octokit(token).users.getAuthenticated()
+  return { id: data.id, login: data.login, avatarUrl: data.avatar_url }
 }

@@ -7,27 +7,20 @@ function requireEnv(key: string): string {
 function build() {
   return {
     github: {
-      appId: Number(requireEnv('GITHUB_APP_ID')),
-      privateKey: Buffer.from(requireEnv('GITHUB_APP_PRIVATE_KEY_BASE64'), 'base64').toString('utf-8'),
-      installationId: Number(requireEnv('GITHUB_INSTALLATION_ID')),
       oauth: {
         clientId: requireEnv('GITHUB_OAUTH_CLIENT_ID'),
         clientSecret: requireEnv('GITHUB_OAUTH_CLIENT_SECRET'),
       },
-      owner: requireEnv('GITHUB_OWNER'),
-      repo: requireEnv('GITHUB_REPO'),
-      contentPath: process.env.GITHUB_CONTENT_PATH ?? 'src/content/blog',
-      defaultBranch: process.env.GITHUB_DEFAULT_BRANCH ?? 'main',
     },
     jwt: {
       secret: requireEnv('JWT_SECRET'),
     },
-    git: {
-      workDir: process.env.GIT_WORK_DIR ?? '/var/writingdesk/repo',
-    },
-    astro: {
-      buildDir: process.env.ASTRO_BUILD_DIR ?? '/var/writingdesk/astro-build',
-    },
+    // Used to encrypt stored GitHub access tokens
+    tokenSecret: requireEnv('TOKEN_SECRET'),
+    origin: requireEnv('ORIGIN'),
+    // Root directory for all persistent data.
+    // In Kubernetes this should be the mount point of a PersistentVolumeClaim.
+    dataDir: process.env.DATA_DIR ?? '/var/writingdesk',
   }
 }
 

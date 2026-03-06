@@ -2,12 +2,18 @@ import type { Frontmatter, Post, PostSummary } from '../types.js'
 import * as github from './github/index.js'
 import { today } from '../utils.js'
 
-export async function listPosts(): Promise<PostSummary[]> {
-  return github.listPosts()
+export interface BlogContext {
+  token: string    // decrypted GitHub OAuth token
+  owner: string
+  repo: string
 }
 
-export async function getPost(slug: string): Promise<Post> {
-  return github.getPost(slug)
+export async function listPosts(ctx: BlogContext): Promise<PostSummary[]> {
+  return github.listPosts(ctx.token, ctx.owner, ctx.repo)
+}
+
+export async function getPost(ctx: BlogContext, slug: string): Promise<Post> {
+  return github.getPost(ctx.token, ctx.owner, ctx.repo, slug)
 }
 
 export interface CreatePostInput {
@@ -16,13 +22,13 @@ export interface CreatePostInput {
   body: string
 }
 
-export async function createPost({ slug, frontmatter, body }: CreatePostInput): Promise<string> {
+export async function createPost(ctx: BlogContext, { slug, frontmatter, body }: CreatePostInput): Promise<string> {
   const full: Frontmatter = {
     ...frontmatter,
     pubDate: frontmatter.pubDate ?? today(),
     draft: true,
   }
-  return github.savePost({ slug, frontmatter: full, body })
+  return github.savePost({ token: ctx.token, owner: ctx.owner, repo: ctx.repo, slug, frontmatter: full, body })
 }
 
 export interface UpdatePostInput {
@@ -33,28 +39,28 @@ export interface UpdatePostInput {
   sha: string
 }
 
-export async function updatePost({ slug, previousSlug, frontmatter, body, sha }: UpdatePostInput): Promise<string> {
+export async function updatePost(ctx: BlogContext, { slug, frontmatter, body, sha }: UpdatePostInput): Promise<string> {
   const updated: Frontmatter = { ...frontmatter, updatedDate: today() }
-  return github.savePost({ slug, previousSlug, frontmatter: updated, body, sha })
+  return github.savePost({ token: ctx.token, owner: ctx.owner, repo: ctx.repo, slug, frontmatter: updated, body, sha })
 }
 
-export async function publishPost(slug: string, sha: string): Promise<string> {
-  const post = await github.getPost(slug)
+export async function publishPost(ctx: BlogContext, slug: string, sha: string): Promise<string> {
+  const post = await github.getPost(ctx.token, ctx.owner, ctx.repo, slug)
   const frontmatter: Frontmatter = {
     ...post.frontmatter,
     draft: false,
     pubDate: post.frontmatter.pubDate ?? today(),
     updatedDate: today(),
   }
-  return github.savePost({ slug, frontmatter, body: post.body, sha })
+  return github.savePost({ token: ctx.token, owner: ctx.owner, repo: ctx.repo, slug, frontmatter, body: post.body, sha })
 }
 
-export async function unpublishPost(slug: string, sha: string): Promise<string> {
-  const post = await github.getPost(slug)
+export async function unpublishPost(ctx: BlogContext, slug: string, sha: string): Promise<string> {
+  const post = await github.getPost(ctx.token, ctx.owner, ctx.repo, slug)
   const frontmatter: Frontmatter = { ...post.frontmatter, draft: true, updatedDate: today() }
-  return github.savePost({ slug, frontmatter, body: post.body, sha })
+  return github.savePost({ token: ctx.token, owner: ctx.owner, repo: ctx.repo, slug, frontmatter, body: post.body, sha })
 }
 
-export async function deletePost(slug: string, sha: string): Promise<void> {
-  return github.deletePost(slug, sha)
+export async function deletePost(ctx: BlogContext, slug: string, sha: string): Promise<void> {
+  return github.deletePost(ctx.token, ctx.owner, ctx.repo, slug, sha)
 }

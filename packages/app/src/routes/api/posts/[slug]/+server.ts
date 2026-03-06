@@ -1,21 +1,25 @@
-import { json, error } from '@sveltejs/kit'
+import { json, error, redirect } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { getPost, updatePost, deletePost } from '$lib/server/posts.js'
-import { requireRole } from '$lib/server/auth.js'
 import { isValidSlug } from '$lib/utils.js'
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-  requireRole(locals.user, 'author')
+  if (!locals.user) throw redirect(303, '/auth/github')
+  if (!locals.blog) throw error(403, 'No blog configured')
+
+  const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
   try {
-    return json(await getPost(params.slug))
+    return json(await getPost(ctx, params.slug))
   } catch {
     throw error(404, 'Post not found')
   }
 }
 
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
-  requireRole(locals.user, 'author')
+  if (!locals.user) throw redirect(303, '/auth/github')
+  if (!locals.blog) throw error(403, 'No blog configured')
 
+  const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
   const body = await request.json() as {
     sha: string
     newSlug?: string
@@ -28,7 +32,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
     return json({ error: 'Invalid slug', code: 'INVALID_SLUG' }, { status: 422 })
   }
 
-  const sha = await updatePost({
+  const sha = await updatePost(ctx, {
     slug: newSlug,
     previousSlug: params.slug !== newSlug ? params.slug : undefined,
     frontmatter: body.frontmatter as never,
@@ -40,9 +44,11 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
 }
 
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
-  requireRole(locals.user, 'publisher')
+  if (!locals.user) throw redirect(303, '/auth/github')
+  if (!locals.blog) throw error(403, 'No blog configured')
 
+  const ctx = { token: locals.blog.token, owner: locals.blog.repoOwner, repo: locals.blog.repoName }
   const body = await request.json() as { sha: string }
-  await deletePost(params.slug, body.sha)
+  await deletePost(ctx, params.slug, body.sha)
   return new Response(null, { status: 204 })
 }

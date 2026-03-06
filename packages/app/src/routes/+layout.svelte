@@ -11,9 +11,7 @@
 
     <nav class="flex items-center gap-6">
       <a href="/" class="text-sm text-gray-600 hover:text-gray-900">Posts</a>
-      {#if data.user?.role === 'publisher'}
-        <a href="/settings" class="text-sm text-gray-600 hover:text-gray-900">Settings</a>
-      {/if}
+      <a href="/settings" class="text-sm text-gray-600 hover:text-gray-900">Settings</a>
 
       {#if data.user}
         <div class="flex items-center gap-2">

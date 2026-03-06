@@ -1,36 +1,38 @@
-import { error } from '@sveltejs/kit'
 import { SignJWT, jwtVerify } from 'jose'
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import type { Cookies } from '@sveltejs/kit'
 import { getConfig } from './config.js'
 
 const COOKIE_NAME = 'wd_session'
 const SESSION_SECONDS = 8 * 60 * 60   // 8 hours
-const REFRESH_THRESHOLD = 60 * 60     // refresh when <1 hour remains
+const REFRESH_THRESHOLD = 60 * 60     // refresh when < 1 hour remains
+
+// ── Session JWT ───────────────────────────────────────────────────────────────
 
 export interface SessionPayload {
-  githubUserId: number
+  userId: number
+  githubId: number
   login: string
   avatarUrl: string
-  role: 'author' | 'publisher'
   iat?: number
   exp?: number
 }
 
-function secret(): Uint8Array {
+function jwtSecret(): Uint8Array {
   return new TextEncoder().encode(getConfig().jwt.secret)
 }
 
 export async function createSession(payload: SessionPayload, cookies: Cookies): Promise<void> {
   const token = await new SignJWT({
-    githubUserId: payload.githubUserId,
+    userId: payload.userId,
+    githubId: payload.githubId,
     login: payload.login,
     avatarUrl: payload.avatarUrl,
-    role: payload.role,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_SECONDS}s`)
-    .sign(secret())
+    .sign(jwtSecret())
 
   cookies.set(COOKIE_NAME, token, {
     path: '/',
@@ -45,7 +47,7 @@ export async function getSession(cookies: Cookies): Promise<SessionPayload | nul
   const token = cookies.get(COOKIE_NAME)
   if (!token) return null
   try {
-    const { payload } = await jwtVerify(token, secret())
+    const { payload } = await jwtVerify(token, jwtSecret())
     return payload as unknown as SessionPayload
   } catch {
     return null
@@ -64,28 +66,33 @@ export function clearSession(cookies: Cookies): void {
   cookies.delete(COOKIE_NAME, { path: '/' })
 }
 
-export function requireRole(user: App.Locals['user'], minimum: 'author' | 'publisher'): void {
-  if (!user) throw error(401, 'Unauthenticated')
-  const order = ['author', 'publisher'] as const
-  if (order.indexOf(user.role) < order.indexOf(minimum)) {
-    throw error(403, 'Insufficient permissions')
-  }
+// ── Token encryption ──────────────────────────────────────────────────────────
+// Stored GitHub OAuth tokens are AES-256-GCM encrypted so they're not plaintext
+// in the database.
+
+const ALGO = 'aes-256-gcm'
+
+function tokenKey(): Buffer {
+  // TOKEN_SECRET must be 32 bytes (64 hex chars, or 32-char string padded)
+  const secret = getConfig().tokenSecret
+  return Buffer.from(secret.padEnd(32, '0').slice(0, 32))
 }
 
-export async function resolveRole(login: string): Promise<'author' | 'publisher' | null> {
-  const { owner, repo } = getConfig().github
-  const { getInstallationToken } = await import('./github/index.js')
-  const token = await getInstallationToken()
+export function encryptToken(plaintext: string): string {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv(ALGO, tokenKey(), iv)
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  // iv:tag:ciphertext — all hex
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`
+}
 
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/collaborators/${login}/permission`,
-    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } },
-  )
-
-  if (!res.ok) return null
-
-  const { permission } = await res.json() as { permission: string }
-  if (permission === 'write') return 'author'
-  if (permission === 'maintain' || permission === 'admin') return 'publisher'
-  return null
+export function decryptToken(stored: string): string {
+  const [ivHex, tagHex, dataHex] = stored.split(':')
+  const iv = Buffer.from(ivHex, 'hex')
+  const tag = Buffer.from(tagHex, 'hex')
+  const data = Buffer.from(dataHex, 'hex')
+  const decipher = createDecipheriv(ALGO, tokenKey(), iv)
+  decipher.setAuthTag(tag)
+  return decipher.update(data).toString('utf8') + decipher.final('utf8')
 }

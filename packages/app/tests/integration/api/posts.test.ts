@@ -1,18 +1,13 @@
 /**
  * Integration tests for API route handlers.
  *
- * These tests import the handler functions directly and call them with a
- * minimal mock RequestEvent, bypassing SvelteKit's routing layer.
- * The GitHub / posts layer is mocked so no network calls are made.
+ * Handlers are imported directly and called with a minimal mock RequestEvent.
+ * The posts business logic layer is mocked — no GitHub calls are made.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { RequestEvent } from '@sveltejs/kit'
 import type { Post, PostSummary } from '$lib/types.js'
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Mocks
-// ──────────────────────────────────────────────────────────────────────────────
 
 vi.mock('$lib/server/posts.js', () => ({
   listPosts: vi.fn(),
@@ -24,26 +19,30 @@ vi.mock('$lib/server/posts.js', () => ({
   deletePost: vi.fn(),
 }))
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-type UserRole = 'author' | 'publisher'
-
-function makeUser(role: UserRole = 'author') {
-  return { githubUserId: 1, login: 'testuser', avatarUrl: '', role }
-}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyEvent = any
 
 function makeEvent(opts: {
-  role?: UserRole | null
+  authed?: boolean
   params?: Record<string, string>
   body?: unknown
   method?: string
-}): RequestEvent {
-  const user = opts.role === null ? null : makeUser(opts.role ?? 'author')
+}): AnyEvent {
+  const blog = opts.authed === false ? null : {
+    id: 1,
+    repoOwner: 'testowner',
+    repoName: 'testrepo',
+    pagesUrl: null,
+    token: 'fake-token',
+  }
+  const user = opts.authed === false ? null : {
+    userId: 1, githubId: 42, login: 'testuser', avatarUrl: '',
+  }
   const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET')
   return {
-    locals: { user },
+    locals: { user, blog },
     params: opts.params ?? {},
     request: new Request('http://localhost/', {
       method,
@@ -52,7 +51,7 @@ function makeEvent(opts: {
     }),
     url: new URL('http://localhost/'),
     route: { id: '' },
-  } as unknown as RequestEvent
+  }
 }
 
 function makePost(slug = 'hello-world'): Post {
@@ -71,14 +70,12 @@ function makeSummary(slug = 'hello-world'): PostSummary {
   return summary
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// GET /api/posts
-// ──────────────────────────────────────────────────────────────────────────────
+// ── GET /api/posts ────────────────────────────────────────────────────────────
 
 describe('GET /api/posts', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('returns list of posts for author', async () => {
+  it('returns list of posts for authenticated user', async () => {
     const posts = await import('$lib/server/posts.js')
     vi.mocked(posts.listPosts).mockResolvedValue([makeSummary()])
 
@@ -86,20 +83,19 @@ describe('GET /api/posts', () => {
     const res = await GET(makeEvent({}))
 
     expect(res.status).toBe(200)
-    const data = await res.json()
-    expect(data).toHaveLength(1)
-    expect(data[0].slug).toBe('hello-world')
+    expect(await res.json()).toHaveLength(1)
   })
 
-  it('throws 401 when unauthenticated', async () => {
+  it('returns 403 when user is authenticated but has no blog', async () => {
     const { GET } = await import('../../../src/routes/api/posts/+server.js')
-    await expect(GET(makeEvent({ role: null }))).rejects.toMatchObject({ status: 401 })
+    // Craft an event with a user but blog=null (mid-onboarding state)
+    const event = makeEvent({})
+    event.locals.blog = null
+    await expect(GET(event)).rejects.toMatchObject({ status: 403 })
   })
 })
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST /api/posts
-// ──────────────────────────────────────────────────────────────────────────────
+// ── POST /api/posts ───────────────────────────────────────────────────────────
 
 describe('POST /api/posts', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -110,11 +106,7 @@ describe('POST /api/posts', () => {
 
     const { POST } = await import('../../../src/routes/api/posts/+server.js')
     const res = await POST(makeEvent({
-      body: {
-        slug: 'new-post',
-        frontmatter: { title: 'New Post', description: '', pubDate: '2024-06-01' },
-        body: 'Content',
-      },
+      body: { slug: 'new-post', frontmatter: { title: 'New Post', description: '', pubDate: '2024-06-01' }, body: 'Content' },
     }))
 
     expect(res.status).toBe(201)
@@ -126,32 +118,19 @@ describe('POST /api/posts', () => {
   it('returns 422 for invalid slug', async () => {
     const { POST } = await import('../../../src/routes/api/posts/+server.js')
     const res = await POST(makeEvent({
-      body: {
-        slug: 'Invalid Slug!',
-        frontmatter: { title: 'T', description: '', pubDate: '' },
-        body: '',
-      },
+      body: { slug: 'Invalid Slug!', frontmatter: { title: 'T', description: '', pubDate: '' }, body: '' },
     }))
-
     expect(res.status).toBe(422)
-    const data = await res.json()
-    expect(data.code).toBe('INVALID_SLUG')
-  })
-
-  it('throws 401 when unauthenticated', async () => {
-    const { POST } = await import('../../../src/routes/api/posts/+server.js')
-    await expect(POST(makeEvent({ role: null, body: {} }))).rejects.toMatchObject({ status: 401 })
+    expect((await res.json()).code).toBe('INVALID_SLUG')
   })
 })
 
-// ──────────────────────────────────────────────────────────────────────────────
-// GET /api/posts/:slug
-// ──────────────────────────────────────────────────────────────────────────────
+// ── GET /api/posts/:slug ──────────────────────────────────────────────────────
 
 describe('GET /api/posts/:slug', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('returns the post for a valid slug', async () => {
+  it('returns the post', async () => {
     const posts = await import('$lib/server/posts.js')
     vi.mocked(posts.getPost).mockResolvedValue(makePost())
 
@@ -159,8 +138,7 @@ describe('GET /api/posts/:slug', () => {
     const res = await GET(makeEvent({ params: { slug: 'hello-world' } }))
 
     expect(res.status).toBe(200)
-    const data = await res.json()
-    expect(data.slug).toBe('hello-world')
+    expect((await res.json()).slug).toBe('hello-world')
   })
 
   it('throws 404 when post is not found', async () => {
@@ -170,16 +148,9 @@ describe('GET /api/posts/:slug', () => {
     const { GET } = await import('../../../src/routes/api/posts/[slug]/+server.js')
     await expect(GET(makeEvent({ params: { slug: 'missing' } }))).rejects.toMatchObject({ status: 404 })
   })
-
-  it('throws 401 when unauthenticated', async () => {
-    const { GET } = await import('../../../src/routes/api/posts/[slug]/+server.js')
-    await expect(GET(makeEvent({ role: null, params: { slug: 'x' } }))).rejects.toMatchObject({ status: 401 })
-  })
 })
 
-// ──────────────────────────────────────────────────────────────────────────────
-// PUT /api/posts/:slug
-// ──────────────────────────────────────────────────────────────────────────────
+// ── PUT /api/posts/:slug ──────────────────────────────────────────────────────
 
 describe('PUT /api/posts/:slug', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -192,17 +163,11 @@ describe('PUT /api/posts/:slug', () => {
     const res = await PUT(makeEvent({
       method: 'PUT',
       params: { slug: 'hello-world' },
-      body: {
-        sha: 'abc123',
-        frontmatter: { title: 'Updated', description: '', pubDate: '2024-06-01' },
-        body: 'Updated content',
-      },
+      body: { sha: 'abc123', frontmatter: { title: 'Updated', description: '', pubDate: '2024-06-01' }, body: 'Updated content' },
     }))
 
     expect(res.status).toBe(200)
-    const data = await res.json()
-    expect(data.sha).toBe('updated-sha')
-    expect(data.slug).toBe('hello-world')
+    expect((await res.json()).sha).toBe('updated-sha')
   })
 
   it('returns 422 for invalid new slug', async () => {
@@ -210,18 +175,12 @@ describe('PUT /api/posts/:slug', () => {
     const res = await PUT(makeEvent({
       method: 'PUT',
       params: { slug: 'hello-world' },
-      body: {
-        sha: 'abc',
-        newSlug: 'Bad Slug!',
-        frontmatter: {},
-        body: '',
-      },
+      body: { sha: 'abc', newSlug: 'Bad Slug!', frontmatter: {}, body: '' },
     }))
-
     expect(res.status).toBe(422)
   })
 
-  it('handles slug rename by passing previousSlug', async () => {
+  it('passes previousSlug when slug changes', async () => {
     const posts = await import('$lib/server/posts.js')
     vi.mocked(posts.updatePost).mockResolvedValue('sha')
 
@@ -229,109 +188,74 @@ describe('PUT /api/posts/:slug', () => {
     await PUT(makeEvent({
       method: 'PUT',
       params: { slug: 'old-slug' },
-      body: {
-        sha: 'abc',
-        newSlug: 'new-slug',
-        frontmatter: { title: 'T', description: '', pubDate: '' },
-        body: '',
-      },
+      body: { sha: 'abc', newSlug: 'new-slug', frontmatter: { title: 'T', description: '', pubDate: '' }, body: '' },
     }))
 
     expect(posts.updatePost).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'fake-token' }),
       expect.objectContaining({ slug: 'new-slug', previousSlug: 'old-slug' }),
     )
   })
 })
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST /api/posts/:slug/publish
-// ──────────────────────────────────────────────────────────────────────────────
+// ── POST /api/posts/:slug/publish ─────────────────────────────────────────────
 
 describe('POST /api/posts/:slug/publish', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('requires publisher role', async () => {
-    const { POST } = await import('../../../src/routes/api/posts/[slug]/publish/+server.js')
-    await expect(
-      POST(makeEvent({ role: 'author', params: { slug: 'x' }, body: { sha: 'abc' } })),
-    ).rejects.toMatchObject({ status: 403 })
-  })
-
-  it('publishes the post and returns new sha for publisher', async () => {
+  it('publishes the post and returns new sha', async () => {
     const posts = await import('$lib/server/posts.js')
     vi.mocked(posts.publishPost).mockResolvedValue('pub-sha')
 
     const { POST } = await import('../../../src/routes/api/posts/[slug]/publish/+server.js')
-    const res = await POST(makeEvent({
-      role: 'publisher',
-      params: { slug: 'hello-world' },
-      body: { sha: 'abc123' },
-    }))
+    const res = await POST(makeEvent({ params: { slug: 'hello-world' }, body: { sha: 'abc123' } }))
 
-    expect(res.status).toBe(200)
-    const data = await res.json()
-    expect(data.sha).toBe('pub-sha')
-    expect(posts.publishPost).toHaveBeenCalledWith('hello-world', 'abc123')
+    expect((await res.json()).sha).toBe('pub-sha')
+    expect(posts.publishPost).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'fake-token' }),
+      'hello-world',
+      'abc123',
+    )
   })
 })
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST /api/posts/:slug/unpublish
-// ──────────────────────────────────────────────────────────────────────────────
+// ── POST /api/posts/:slug/unpublish ──────────────────────────────────────────
 
 describe('POST /api/posts/:slug/unpublish', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('requires publisher role', async () => {
-    const { POST } = await import('../../../src/routes/api/posts/[slug]/unpublish/+server.js')
-    await expect(
-      POST(makeEvent({ role: 'author', params: { slug: 'x' }, body: { sha: 'abc' } })),
-    ).rejects.toMatchObject({ status: 403 })
-  })
-
-  it('unpublishes the post for publisher', async () => {
+  it('unpublishes the post', async () => {
     const posts = await import('$lib/server/posts.js')
     vi.mocked(posts.unpublishPost).mockResolvedValue('unpub-sha')
 
     const { POST } = await import('../../../src/routes/api/posts/[slug]/unpublish/+server.js')
-    const res = await POST(makeEvent({
-      role: 'publisher',
-      params: { slug: 'hello-world' },
-      body: { sha: 'abc123' },
-    }))
+    const res = await POST(makeEvent({ params: { slug: 'hello-world' }, body: { sha: 'abc123' } }))
 
-    const data = await res.json()
-    expect(data.sha).toBe('unpub-sha')
+    expect((await res.json()).sha).toBe('unpub-sha')
   })
 })
 
-// ──────────────────────────────────────────────────────────────────────────────
-// DELETE /api/posts/:slug
-// ──────────────────────────────────────────────────────────────────────────────
+// ── DELETE /api/posts/:slug ───────────────────────────────────────────────────
 
 describe('DELETE /api/posts/:slug', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('requires publisher role', async () => {
-    const { DELETE } = await import('../../../src/routes/api/posts/[slug]/+server.js')
-    await expect(
-      DELETE(makeEvent({ role: 'author', method: 'DELETE', params: { slug: 'x' }, body: { sha: 'abc' } })),
-    ).rejects.toMatchObject({ status: 403 })
-  })
-
-  it('deletes the post and returns 204 for publisher', async () => {
+  it('deletes the post and returns 204', async () => {
     const posts = await import('$lib/server/posts.js')
     vi.mocked(posts.deletePost).mockResolvedValue(undefined)
 
     const { DELETE } = await import('../../../src/routes/api/posts/[slug]/+server.js')
     const res = await DELETE(makeEvent({
-      role: 'publisher',
       method: 'DELETE',
       params: { slug: 'hello-world' },
       body: { sha: 'abc123' },
     }))
 
     expect(res.status).toBe(204)
-    expect(posts.deletePost).toHaveBeenCalledWith('hello-world', 'abc123')
+    expect(posts.deletePost).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'fake-token' }),
+      'hello-world',
+      'abc123',
+    )
   })
 })
