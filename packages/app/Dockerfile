@@ -5,13 +5,16 @@ COPY packages/app/package*.json ./packages/app/
 RUN npm ci
 COPY packages/app ./packages/app
 RUN npm run build --workspace=@writingdesk/app
+# Prune dev dependencies before copying to the runtime image
+RUN npm prune --omit=dev
 
 FROM node:20-alpine
 RUN apk add --no-cache git
 RUN addgroup -S writingdesk && adduser -S writingdesk -G writingdesk
 WORKDIR /app
 COPY --from=builder /app/packages/app/build ./build
-COPY --from=builder /app/packages/app/node_modules ./node_modules
+# Workspaces hoist all packages to the repo root — copy from there, not packages/app/
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/app/package.json .
 # Drizzle migrations are applied automatically at startup via migrate()
 COPY --from=builder /app/packages/app/drizzle ./drizzle
