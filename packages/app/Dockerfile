@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 COPY packages/app/package*.json ./packages/app/
@@ -8,7 +8,7 @@ RUN npm run build --workspace=@writingdesk/app
 # Prune dev dependencies before copying to the runtime image
 RUN npm prune --omit=dev
 
-FROM node:20-alpine
+FROM node:24-alpine
 RUN apk add --no-cache git
 RUN addgroup -S writingdesk && adduser -S writingdesk -G writingdesk
 WORKDIR /app
